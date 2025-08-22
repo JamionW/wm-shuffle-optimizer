@@ -1,6 +1,8 @@
 # ============================================================================
-# FILE: data_collector.py
+# COMPLETE REPLACEMENT for data_collector.py
+# This fixes the method name issue and array comparison bug
 # ============================================================================
+
 import numpy as np
 import pandas as pd
 from datetime import datetime
@@ -19,75 +21,121 @@ class ShuffleDataCollector:
         self.shuffle_history = []
         
     def simulate_shuffle_metrics(self, num_queries=100):
-        """Generate synthetic shuffle data for testing"""
+        """Generate synthetic shuffle data with hidden spatial patterns"""
         np.random.seed(42)
         
-        # Create partition topology (some partitions are co-located)
-        partition_nodes = {i: i % self.num_nodes for i in range(self.num_partitions)}
+        # Create partition topology with CLUSTERS
+        # Partitions in same cluster have affinity (lower cost)
+        num_clusters = 4
+        partition_clusters = {}
+        for i in range(self.num_partitions):
+            partition_clusters[i] = i % num_clusters
+        
+        # Create hidden affinity matrix (this is what WM should discover)
+        affinity_matrix = np.zeros((self.num_partitions, self.num_partitions))
+        for i in range(self.num_partitions):
+            for j in range(self.num_partitions):
+                if partition_clusters[i] == partition_clusters[j]:
+                    affinity_matrix[i, j] = 0.3  # Low cost multiplier
+                else:
+                    # Cost increases with cluster distance
+                    cluster_dist = abs(partition_clusters[i] - partition_clusters[j])
+                    affinity_matrix[i, j] = 1.0 + cluster_dist * 0.5
+        
+        # Add some noise to make it non-trivial
+        affinity_matrix += np.random.normal(0, 0.1, affinity_matrix.shape)
+        affinity_matrix = np.maximum(affinity_matrix, 0.1)
         
         for query_id in range(num_queries):
-            # Simulate different query patterns
             pattern = random.choice(['broadcast', 'shuffle', 'local', 'skewed'])
             
+            # Generate shuffles based on pattern
             if pattern == 'broadcast':
-                # One partition to many
                 source = random.randint(0, self.num_partitions - 1)
                 targets = random.sample(range(self.num_partitions), k=random.randint(5, 10))
                 
                 for target in targets:
-                    self._add_shuffle_record(query_id, source, target, 
-                                           partition_nodes, pattern)
-                    
+                    self._add_spatial_shuffle_record(
+                        query_id, source, target, affinity_matrix, partition_clusters, pattern
+                    )
+            
             elif pattern == 'shuffle':
-                # Many to many
-                sources = random.sample(range(self.num_partitions), k=random.randint(3, 8))
-                targets = random.sample(range(self.num_partitions), k=random.randint(3, 8))
+                # Prefer shuffles within clusters
+                cluster = random.randint(0, num_clusters - 1)
+                cluster_partitions = [p for p, c in partition_clusters.items() if c == cluster]
+                
+                # 70% within-cluster, 30% cross-cluster
+                if random.random() < 0.7 and len(cluster_partitions) >= 2:
+                    sources = random.sample(cluster_partitions, 
+                                          k=min(len(cluster_partitions), random.randint(2, 5)))
+                    targets = random.sample(cluster_partitions,
+                                          k=min(len(cluster_partitions), random.randint(2, 5)))
+                else:
+                    sources = random.sample(range(self.num_partitions), k=random.randint(3, 8))
+                    targets = random.sample(range(self.num_partitions), k=random.randint(3, 8))
                 
                 for source in sources:
                     for target in targets:
-                        if random.random() > 0.5:  # Sparse connections
-                            self._add_shuffle_record(query_id, source, target,
-                                                   partition_nodes, pattern)
-                            
+                        if random.random() > 0.5:
+                            self._add_spatial_shuffle_record(
+                                query_id, source, target, affinity_matrix, 
+                                partition_clusters, pattern
+                            )
+            
             elif pattern == 'local':
-                # Prefer same-node transfers
-                for _ in range(random.randint(2, 5)):
-                    node = random.randint(0, self.num_nodes - 1)
-                    node_partitions = [p for p, n in partition_nodes.items() if n == node]
-                    if len(node_partitions) >= 2:
-                        source, target = random.sample(node_partitions, 2)
-                        self._add_shuffle_record(query_id, source, target,
-                                               partition_nodes, pattern)
-                                               
+                # Strong preference for same-cluster
+                cluster = random.randint(0, num_clusters - 1)
+                cluster_partitions = [p for p, c in partition_clusters.items() if c == cluster]
+                
+                if len(cluster_partitions) >= 2:
+                    for _ in range(random.randint(2, 5)):
+                        source, target = random.sample(cluster_partitions, 2)
+                        self._add_spatial_shuffle_record(
+                            query_id, source, target, affinity_matrix,
+                            partition_clusters, pattern
+                        )
+            
             else:  # skewed
-                # Heavy traffic to specific partitions
                 hot_partition = random.randint(0, self.num_partitions - 1)
                 sources = random.sample(range(self.num_partitions), k=random.randint(5, 10))
                 
                 for source in sources:
-                    self._add_shuffle_record(query_id, source, hot_partition,
-                                           partition_nodes, pattern)
+                    self._add_spatial_shuffle_record(
+                        query_id, source, hot_partition, affinity_matrix,
+                        partition_clusters, pattern
+                    )
         
         return self.shuffle_history
     
-    def _add_shuffle_record(self, query_id, source, target, partition_nodes, pattern):
-        """Add a single shuffle record"""
-        # Calculate network distance
-        same_node = partition_nodes[source] == partition_nodes[target]
+    def _add_spatial_shuffle_record(self, query_id, source, target, affinity_matrix, 
+                                   partition_clusters, pattern):
+        """Add shuffle record with spatial cost structure"""
+        
+        # Base volume
+        if pattern == 'broadcast':
+            base_volume = np.random.lognormal(20, 1)
+        elif pattern == 'skewed':
+            base_volume = np.random.lognormal(21, 1.5)
+        else:
+            base_volume = np.random.lognormal(18, 1)
+        
+        # Apply hidden spatial affinity
+        spatial_cost_multiplier = affinity_matrix[source, target]
+        
+        # Simple baseline wouldn't know about this affinity!
+        # It only sees volume and network distance
+        # Fix: Use modulo for node assignment (not the array)
+        source_node = source % self.num_nodes
+        target_node = target % self.num_nodes
+        same_node = (source_node == target_node)
         network_distance = 0 if same_node else 1
         
-        # Simulate data volume based on pattern
-        if pattern == 'broadcast':
-            base_volume = np.random.lognormal(20, 1)  # ~1GB
-        elif pattern == 'skewed':
-            base_volume = np.random.lognormal(21, 1.5)  # Larger, more variable
-        else:
-            base_volume = np.random.lognormal(18, 1)  # ~256MB
+        # True cost includes hidden spatial structure
+        true_cost = (base_volume / 1e6) * spatial_cost_multiplier * (1 + network_distance * 0.5)
         
-        # Simulate cost (correlated with volume and distance)
-        base_cost = base_volume / 1e6 * (1 + network_distance * 2)
-        noise = np.random.normal(0, base_cost * 0.1)
-        actual_cost = max(0.1, base_cost + noise)
+        # Add realistic noise
+        noise = np.random.normal(0, true_cost * 0.15)
+        actual_cost = max(0.1, true_cost + noise)
         
         record = {
             'query_id': query_id,

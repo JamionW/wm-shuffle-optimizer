@@ -76,38 +76,66 @@ class WhittleMaternModel:
         return self.covariance
     
     def predict_shuffle_cost(self, source_partition, target_partition, data_volume):
-        """Predict shuffle cost using covariance structure"""
+        """Improved shuffle cost prediction using covariance as affinity"""
         if self.graph is None:
             raise ValueError("Model not fitted. Call build_from_shuffle_history first.")
         
         C = self.compute_covariance_matrix()
         
-        # Get indices
-        src_idx = self.node_mapping.get(source_partition, 0)
-        tgt_idx = self.node_mapping.get(target_partition, 0)
+        # Map partitions to indices
+        src_idx = self.node_mapping.get(source_partition, -1)
+        tgt_idx = self.node_mapping.get(target_partition, -1)
         
-        # Covariance-based cost (low covariance = high cost)
-        cov_value = C[src_idx, tgt_idx]
-        base_cost = 1.0 / (abs(cov_value) + 1e-6)
+        # Handle unseen partitions
+        if src_idx == -1 or tgt_idx == -1:
+            # Use average covariance for unseen partitions
+            avg_cov = np.mean(np.abs(C))
+            cov_value = avg_cov
+        else:
+            cov_value = C[src_idx, tgt_idx]
         
-        # Scale by data volume
-        volume_factor = np.log1p(data_volume / 1e6)  # Convert to MB and log scale
+        # Normalize covariance to [0, 1] range
+        C_min = np.min(C)
+        C_max = np.max(C)
+        if C_max - C_min > 1e-6:
+            normalized_cov = (cov_value - C_min) / (C_max - C_min)
+        else:
+            normalized_cov = 0.5
         
-        return base_cost * volume_factor
+        # High covariance = low cost (affinity)
+        # Use exponential transformation for smoother mapping
+        affinity = np.exp(2 * normalized_cov - 1)  # Range ~[0.37, 2.72]
+        cost_multiplier = 1.0 / affinity
+        
+        # Combine with volume
+        volume_factor = np.log1p(data_volume / 1e6)
+        
+        # Final cost
+        predicted_cost = cost_multiplier * volume_factor
+        
+        return predicted_cost
     
     def fit(self, shuffle_records, observed_costs):
         """Fit model parameters using MLE"""
         self.build_from_shuffle_history(shuffle_records)
         
-        def objective(params):
-            self.nu = max(0.1, params[0])
-            self.kappa = max(0.01, np.exp(params[1]))
-            self.tau = max(0.01, np.exp(params[2]))
+        def objective_with_regularization(params):
+            nu = max(0.5, params[0])  # Higher minimum nu
+            kappa = max(0.1, np.exp(params[1]))
+            tau = max(0.1, np.exp(params[2]))
+            
+            # Prevent extreme values
+            if nu > 2.5 or kappa > 10 or tau > 10:
+                return 1e10
+            
+            self.nu = nu
+            self.kappa = kappa
+            self.tau = tau
             
             try:
                 Q = self.compute_precision_matrix()
                 
-                # Log likelihood components
+                # Log likelihood
                 sign, logdet = np.linalg.slogdet(Q)
                 if sign <= 0:
                     return 1e10
@@ -116,35 +144,51 @@ class WhittleMaternModel:
                 y = np.array(observed_costs)
                 y = (y - y.mean()) / (y.std() + 1e-6)
                 
-                # Pad or truncate y to match Q dimension
+                # Match dimensions
                 n = Q.shape[0]
                 if len(y) < n:
                     y = np.pad(y, (0, n - len(y)), mode='mean')
                 else:
                     y = y[:n]
                 
-                # Negative log likelihood
+                # NLL with L2 regularization on parameters
                 quad_form = y.T @ Q @ y
                 nll = -0.5 * logdet + 0.5 * quad_form
                 
-                return nll
+                # Add regularization to prefer moderate parameters
+                reg_term = 0.1 * (
+                    (nu - 1.5)**2 +  # Prefer nu around 1.5
+                    (np.log(kappa))**2 +  # Prefer kappa around 1
+                    (np.log(tau))**2  # Prefer tau around 1
+                )
+                
+                return nll + reg_term
                 
             except Exception as e:
                 return 1e10
         
-        # Initial parameters
-        x0 = [self.nu, np.log(self.kappa), np.log(self.tau)]
+        # Try multiple initializations and pick best
+        best_result = None
+        best_score = float('inf')
         
-        # Optimize
-        result = minimize(objective, x0, method='L-BFGS-B', 
-                         bounds=[(0.1, 3.0), (-3, 3), (-3, 3)])
+        for nu_init in [0.5, 1.0, 1.5, 2.0]:
+            x0 = [nu_init, 0.0, 0.0]  # log(1) = 0
+            
+            result = minimize(
+                objective_with_regularization, 
+                x0, 
+                method='L-BFGS-B',
+                bounds=[(0.5, 2.5), (-2, 2), (-2, 2)]
+            )
+            
+            if result.fun < best_score:
+                best_score = result.fun
+                best_result = result
         
-        # Update parameters
-        self.nu = max(0.1, result.x[0])
-        self.kappa = max(0.01, np.exp(result.x[1]))
-        self.tau = max(0.01, np.exp(result.x[2]))
+        # Update with best parameters
+        self.nu = max(0.5, best_result.x[0])
+        self.kappa = max(0.1, np.exp(best_result.x[1]))
+        self.tau = max(0.1, np.exp(best_result.x[2]))
         
-        # Clear cached covariance
         self.covariance = None
-        
-        return result
+        return best_result

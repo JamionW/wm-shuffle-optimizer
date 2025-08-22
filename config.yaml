@@ -15,14 +15,14 @@ data:
   data_path: "./data"
   
   # Simulation parameters (ignored if use_simulation=false)
-  num_partitions: 20
+  num_partitions: 50 #20
   num_nodes: 4
-  synthetic_queries: 100
+  synthetic_queries: 500 #100
   
 # Model Configuration
 model:
   nu_init: 1.5  # Smoothness parameter
-  kappa_init: 1.0  # Range parameter
+  kappa_init: 0.5  # Range parameter
   tau_init: 1.0  # Precision parameter
   
 # Experiment Configuration
