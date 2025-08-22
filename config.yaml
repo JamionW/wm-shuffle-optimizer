@@ -1,0 +1,41 @@
+# USER EDIT: Modify these settings for your environment
+
+# Spark Configuration
+spark:
+  master: "local[*]"  # Change to "yarn" for Databricks
+  app_name: "WM-Shuffle-Optimizer"
+  log_level: "WARN"
+  
+# Data Configuration  
+data:
+  # USER EDIT: Set to false if you have real Spark cluster
+  use_simulation: true
+  
+  # USER EDIT: Path to your data files (for real mode)
+  data_path: "./data"
+  
+  # Simulation parameters (ignored if use_simulation=false)
+  num_partitions: 20
+  num_nodes: 4
+  synthetic_queries: 100
+  
+# Model Configuration
+model:
+  nu_init: 1.5  # Smoothness parameter
+  kappa_init: 1.0  # Range parameter
+  tau_init: 1.0  # Precision parameter
+  
+# Experiment Configuration
+experiment:
+  train_test_split: 0.7
+  random_seed: 42
+  output_path: "./results"
+  
+# USER EDIT: Database connection (for real data)
+database:
+  type: "none"  # Options: "none", "postgres", "mysql", "hive"
+  host: "localhost"
+  port: 5432
+  database: "testdb"
+  username: "user"
+  password: "pass"

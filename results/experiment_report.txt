@@ -1,0 +1,51 @@
+
+Whittle-Matérn Shuffle Cost Optimization - Experiment Report
+=============================================================
+Generated: 2025-08-22 19:16:27
+
+Configuration:
+--------------
+- Simulation Mode: True
+- Number of Partitions: 20
+- Number of Nodes: 4
+- Training Queries: 760
+
+Model Parameters (Optimized):
+-----------------------------
+- nu (smoothness): 1.500
+- kappa (range): 1.000
+- tau (precision): 1.000
+
+Performance Metrics:
+--------------------
+WM Model:
+  - MAE: 0.6587
+  - RMSE: 0.8609
+  - Correlation: 0.6294
+
+Baseline (Volume-based):
+  - MAE: 0.0461
+  - RMSE: 0.1570
+  - Correlation: 0.9877
+
+Improvements:
+  - MAE Reduction: -1330.4%
+  - Correlation Improvement: -36.3%
+
+Conclusion:
+-----------
+The Whittle-Matérn model UNDERPERFORMS 
+the baseline by 1330.4% in terms of mean absolute error.
+
+The learned covariance structure captures MODERATE 
+relationships between partitions with a correlation of 0.629.
+
+Files Generated:
+----------------
+- shuffle_history.csv: Raw shuffle data
+- model_parameters.json: Optimized WM parameters
+- evaluation_metrics.json: Performance metrics
+- predictions_comparison.csv: Detailed predictions
+- covariance_matrix.png: Learned structure visualization
+- prediction_comparison.png: Scatter plots
+- error_by_pattern.png: Error analysis
