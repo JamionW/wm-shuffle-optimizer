@@ -1,7 +1,0 @@
-{
-  "nu": 0.9999995458563835,
-  "kappa": 1.0,
-  "tau": 1.000001816576116,
-  "optimization_success": true,
-  "optimization_message": "CONVERGENCE: NORM OF PROJECTED GRADIENT <= PGTOL"
-}
