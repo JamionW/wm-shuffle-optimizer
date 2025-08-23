@@ -1,12 +1,12 @@
 # USER EDIT: Modify these settings for your environment
 
-# Spark Configuration
+# Spark Configuration - UNCHANGED
 spark:
   master: "local[*]"  # Change to "yarn" for Databricks
-  app_name: "WM-Shuffle-Optimizer"
+  app_name: "ML-Shuffle-Optimizer"  # Was: WM-Shuffle-Optimizer
   log_level: "WARN"
   
-# Data Configuration  
+# Data Configuration - UNCHANGED 
 data:
   # USER EDIT: Set to false if you have real Spark cluster
   use_simulation: true
@@ -19,19 +19,22 @@ data:
   num_nodes: 4
   synthetic_queries: 500 #100
   
-# Model Configuration
+# Model Configuration - CHANGED FROM WM TO ML PARAMETERS
 model:
-  nu_init: 1.5  # Smoothness parameter
-  kappa_init: 0.5  # Range parameter
-  tau_init: 1.0  # Precision parameter
+  # REPLACED: nu_init, kappa_init, tau_init with ML parameters
+  type: "random_forest"  # Options: "random_forest", "xgboost" 
+  n_estimators: 100      # Number of trees
+  max_depth: 10          # Maximum tree depth
+  min_samples_split: 5   # Minimum samples to split (RF only)
+  learning_rate: 0.1     # Learning rate (XGBoost only)
   
-# Experiment Configuration
+# Experiment Configuration - UNCHANGED
 experiment:
   train_test_split: 0.7
   random_seed: 42
   output_path: "./results"
   
-# USER EDIT: Database connection (for real data)
+# USER EDIT: Database connection (for real data) - UNCHANGED
 database:
   type: "none"  # Options: "none", "postgres", "mysql", "hive"
   host: "localhost"
