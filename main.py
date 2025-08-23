@@ -286,7 +286,7 @@ Files Generated:
 - predictions_comparison.csv: Detailed predictions
 - covariance_matrix.png: Learned affinity structure visualization
 - prediction_comparison.png: Scatter plots
-- feature_importance.png: Most important features           # NEW
+- feature_importance.png: Most important features 
 """
         
         with open(self.output_dir / 'experiment_report.txt', 'w') as f:
