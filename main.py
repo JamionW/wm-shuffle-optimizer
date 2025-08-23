@@ -264,6 +264,83 @@ class ShuffleOptimizationExperiment:
         plt.close()
         
         print(f"Visualizations saved to {self.output_dir}")
+
+    def evaluate_model_detailed(self, test_data):
+        """Detailed evaluation showing pattern-specific performance"""
+        print("\nEvaluating model performance by pattern...")
+        
+        predictions = []
+        baselines = []
+        actuals = []
+        patterns = []
+        
+        for record in test_data:
+            # WM prediction
+            pred = self.wm_model.predict_shuffle_cost_improved(
+                record['source_partition'],
+                record['target_partition'],
+                record['data_volume']
+            )
+            predictions.append(pred)
+            
+            # Baseline (what's in the record or recalculate)
+            if 'baseline_estimate' in record:
+                baseline = record['baseline_estimate']
+            else:
+                baseline = record['data_volume'] / 1e6 * (1 + record['network_distance'])
+            baselines.append(baseline)
+            
+            # Actual cost
+            actuals.append(record['actual_cost'])
+            patterns.append(record['pattern'])
+        
+        # Convert to arrays
+        predictions = np.array(predictions)
+        baselines = np.array(baselines)
+        actuals = np.array(actuals)
+        patterns = np.array(patterns)
+        
+        # Overall metrics
+        overall_metrics = {
+            'wm_mae': np.mean(np.abs(predictions - actuals)),
+            'baseline_mae': np.mean(np.abs(baselines - actuals)),
+            'wm_correlation': np.corrcoef(predictions, actuals)[0, 1],
+            'baseline_correlation': np.corrcoef(baselines, actuals)[0, 1]
+        }
+        
+        # Pattern-specific analysis
+        print("\nPattern-specific performance:")
+        print("-" * 50)
+        
+        for pattern in np.unique(patterns):
+            mask = patterns == pattern
+            pattern_actuals = actuals[mask]
+            pattern_preds = predictions[mask]
+            pattern_baselines = baselines[mask]
+            
+            wm_mae = np.mean(np.abs(pattern_preds - pattern_actuals))
+            baseline_mae = np.mean(np.abs(pattern_baselines - pattern_actuals))
+            improvement = (baseline_mae - wm_mae) / baseline_mae * 100
+            
+            print(f"{pattern:10s}: WM MAE={wm_mae:.3f}, Baseline MAE={baseline_mae:.3f}, "
+                f"Improvement={improvement:+.1f}%")
+        
+        print("-" * 50)
+        
+        # Find where WM wins
+        wm_wins = np.abs(predictions - actuals) < np.abs(baselines - actuals)
+        win_rate = np.mean(wm_wins) * 100
+        
+        print(f"\nWM wins on {win_rate:.1f}% of test cases")
+        
+        # Analyze wins by pattern
+        print("\nWin rate by pattern:")
+        for pattern in np.unique(patterns):
+            mask = patterns == pattern
+            pattern_win_rate = np.mean(wm_wins[mask]) * 100
+            print(f"  {pattern}: {pattern_win_rate:.1f}%")
+        
+        return overall_metrics
     
     def generate_report(self, metrics):
         """Generate final report"""
@@ -355,31 +432,57 @@ Files Generated:
         return metrics
 
 
-def main():
-    """Main entry point"""
-    parser = argparse.ArgumentParser(
-        description='Whittle-Matérn Shuffle Cost Optimizer'
-    )
-    parser.add_argument(
-        '--config', 
-        default='config.yaml',
-        help='Path to configuration file'
-    )
+def main(config_path='config.yaml'):
+    """Main entry point - works in both CLI and notebook environments"""
     
-    args = parser.parse_args()
+    # Check if we're in a notebook/IPython environment
+    try:
+        get_ipython()
+        in_notebook = True
+    except NameError:
+        in_notebook = False
+    
+    if in_notebook:
+        # Notebook mode - don't use argparse
+        print("Running in notebook/Databricks mode")
+        # You can override config_path here if needed
+        # config_path = '/dbfs/wm-shuffle/config.yaml'  # Example for Databricks
+    else:
+        # CLI mode - use argparse
+        import argparse
+        parser = argparse.ArgumentParser(
+            description='Whittle-Matérn Shuffle Cost Optimizer'
+        )
+        parser.add_argument(
+            '--config', 
+            default='config.yaml',
+            help='Path to configuration file'
+        )
+        
+        args = parser.parse_args()
+        config_path = args.config
     
     # Run experiment
-    experiment = ShuffleOptimizationExperiment(args.config)
+    experiment = ShuffleOptimizationExperiment(config_path)
     metrics = experiment.run()
     
-    # Return success/failure based on improvement
-    if metrics['mae_improvement'] > 0:
-        print("\n✓ SUCCESS: WM model outperforms baseline!")
-        sys.exit(0)
-    else:
-        print("\n✗ FAILURE: WM model underperforms baseline.")
-        sys.exit(1)
+    # Return metrics for notebook use
+    return metrics, experiment
 
-
+# Update the if __name__ == '__main__': block
 if __name__ == '__main__':
-    main()
+    metrics, experiment = main()
+    
+    # Exit with appropriate code in CLI mode
+    try:
+        get_ipython()
+        # In notebook - don't exit
+        print("\nExperiment complete. Check 'metrics' variable for results.")
+    except NameError:
+        # In CLI - exit with code
+        if metrics['mae_improvement'] > 0:
+            print("\n✓ SUCCESS: WM model outperforms baseline!")
+            sys.exit(0)
+        else:
+            print("\n✗ FAILURE: WM model underperforms baseline.")
+            sys.exit(1)

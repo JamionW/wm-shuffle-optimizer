@@ -108,10 +108,10 @@ class ShuffleDataCollector:
         return self.shuffle_history
     
     def _add_spatial_shuffle_record(self, query_id, source, target, affinity_matrix, 
-                                   partition_clusters, pattern):
-        """Add shuffle record with spatial cost structure"""
+                                partition_clusters, pattern):
+        """Add shuffle record with NON-LINEAR spatial cost structure"""
         
-        # Base volume
+        # Base volume (what the baseline sees)
         if pattern == 'broadcast':
             base_volume = np.random.lognormal(20, 1)
         elif pattern == 'skewed':
@@ -119,23 +119,40 @@ class ShuffleDataCollector:
         else:
             base_volume = np.random.lognormal(18, 1)
         
-        # Apply hidden spatial affinity
-        spatial_cost_multiplier = affinity_matrix[source, target]
-        
-        # Simple baseline wouldn't know about this affinity!
-        # It only sees volume and network distance
-        # Fix: Use modulo for node assignment (not the array)
+        # Network distance (what the baseline sees)
         source_node = source % self.num_nodes
         target_node = target % self.num_nodes
         same_node = (source_node == target_node)
         network_distance = 0 if same_node else 1
         
-        # True cost includes hidden spatial structure
-        true_cost = (base_volume / 1e6) * spatial_cost_multiplier * (1 + network_distance * 0.5)
+        # What the baseline would predict
+        baseline_cost = (base_volume / 1e6) * (1 + network_distance)
         
-        # Add realistic noise
-        noise = np.random.normal(0, true_cost * 0.15)
-        actual_cost = max(0.1, true_cost + noise)
+        # Hidden spatial structure that BREAKS the linear relationship
+        spatial_multiplier = affinity_matrix[source, target]
+        
+        # Non-linear transformation to hide the pattern
+        if spatial_multiplier < 0.5:
+            # Same cluster - costs are LOWER than baseline expects
+            hidden_factor = 0.3 + 0.2 * np.sin(spatial_multiplier * np.pi)
+        else:
+            # Different cluster - costs are HIGHER in non-linear way
+            hidden_factor = 1.5 + np.exp(spatial_multiplier - 1.0)
+        
+        # Add pattern-specific non-linearities
+        if pattern == 'local' and spatial_multiplier < 0.5:
+            # Local patterns within same cluster are super efficient
+            hidden_factor *= 0.5
+        elif pattern == 'skewed':
+            # Skewed patterns have congestion effects
+            hidden_factor *= (1.0 + 0.5 * np.log1p(query_id % 10))
+        
+        # True cost is NON-LINEAR function of inputs
+        actual_cost = baseline_cost * hidden_factor
+        
+        # Add noise that's proportional to the hidden structure
+        noise = np.random.normal(0, actual_cost * 0.1)
+        actual_cost = max(0.1, actual_cost + noise)
         
         record = {
             'query_id': query_id,
@@ -145,6 +162,7 @@ class ShuffleDataCollector:
             'network_distance': network_distance,
             'pattern': pattern,
             'actual_cost': actual_cost,
+            'baseline_estimate': baseline_cost,  # Add for comparison
             'timestamp': datetime.now().isoformat()
         }
         
